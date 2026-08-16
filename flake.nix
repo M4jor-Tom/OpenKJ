@@ -24,13 +24,9 @@
       devShells = forAllSystems (pkgs: {
         default = pkgs.mkShell {
           inputsFrom = [ (openkjFor pkgs) ];
-          packages = with pkgs; [
-            clang-tools
-            cppcheck
-          ];
+          # clang-tools for clangd and clang-tidy against the compile database.
+          packages = [ pkgs.clang-tools ];
         };
       });
-
-      formatter = forAllSystems (pkgs: pkgs.nixfmt-rfc-style);
     };
 }
