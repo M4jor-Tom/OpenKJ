@@ -3207,8 +3207,10 @@ void MainWindow::songDropNoSingerSel() {
 
 void MainWindow::newVersionAvailable(const QString &version) {
     QMessageBox msgBox;
+    // RichText is required for the download link below, so the server-supplied
+    // version string must be escaped rather than interpolated raw.
     msgBox.setTextFormat(Qt::RichText);
-    msgBox.setText("New version of OpenKJ is available: " + version);
+    msgBox.setText("New version of OpenKJ is available: " + version.toHtmlEscaped());
     msgBox.setIcon(QMessageBox::Information);
     if (m_updateChecker->getOS() == "Linux") {
         msgBox.setInformativeText(
