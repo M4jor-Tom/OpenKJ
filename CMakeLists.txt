@@ -56,31 +56,35 @@ endfunction()
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 if (MSVC)
-    okj_add_flag_if_supported(/GS)
-    okj_add_flag_if_supported(/guard:cf)
-    okj_add_flag_if_supported(/sdl)
-    string(APPEND CMAKE_EXE_LINKER_FLAGS " /NXCOMPAT /DYNAMICBASE /HIGHENTROPYVA /guard:cf")
+    # Not probed: check_cxx_compiler_flag is unreliable against MSVC, which warns
+    # (D9002) rather than failing on an unknown switch. /GS, /NXCOMPAT,
+    # /DYNAMICBASE and (on x64) /HIGHENTROPYVA are already MSVC defaults, so only
+    # the two that are not are requested here.
+    add_compile_options(/sdl /guard:cf)
+    string(APPEND CMAKE_EXE_LINKER_FLAGS " /guard:cf")
 else ()
-    okj_add_flag_if_supported(-fstack-protector-strong)
+    # Universal on every GCC >= 4.9 and Clang >= 3.5, so probing them only costs
+    # configure time.
+    add_compile_options(-fstack-protector-strong -Wformat -Wformat-security)
+
+    # These two genuinely vary: -fstack-clash-protection needs GCC 8 / Clang 11,
+    # and -fcf-protection is x86-only.
     okj_add_flag_if_supported(-fstack-clash-protection)
     okj_add_flag_if_supported(-fcf-protection=full)
-    okj_add_flag_if_supported(-Wformat)
-    okj_add_flag_if_supported(-Wformat-security)
 
-    # Prefer level 3 where the toolchain understands it, else fall back to 2.
-    # Skipped for Debug, where it would only produce a "requires optimization"
-    # warning on every translation unit.
-    if (NOT CMAKE_BUILD_TYPE STREQUAL "Debug")
-        check_cxx_compiler_flag("-D_FORTIFY_SOURCE=3" OKJ_HAS_FORTIFY_3)
-        if (OKJ_HAS_FORTIFY_3)
-            add_compile_options(-D_FORTIFY_SOURCE=3)
-        else ()
-            okj_add_flag_if_supported(-D_FORTIFY_SOURCE=2)
-        endif ()
-    endif ()
+    # Not probed either: check_cxx_compiler_flag builds a bare main() with no
+    # headers, so glibc's features.h never sees the define and the test passes
+    # unconditionally — it cannot tell level 3 from level 2. glibc below 2.35
+    # downgrades 3 to 2 on its own, which is the behaviour a fallback would have
+    # produced anyway.
+    #
+    # The generator expression rather than a CMAKE_BUILD_TYPE comparison so this
+    # is also correct under multi-config generators, where CMAKE_BUILD_TYPE is
+    # empty. Skipped for Debug, where it would warn on every translation unit.
+    add_compile_options($<$<NOT:$<CONFIG:Debug>>:-D_FORTIFY_SOURCE=3>)
 
     # ELF-only linker hardening; ld64 on macOS rejects -z outright.
-    if (${CMAKE_SYSTEM_NAME} MATCHES "Linux" OR ${CMAKE_SYSTEM_NAME} MATCHES "FreeBSD")
+    if (CMAKE_SYSTEM_NAME MATCHES "Linux|FreeBSD")
         string(APPEND CMAKE_EXE_LINKER_FLAGS " -Wl,-z,relro -Wl,-z,now -Wl,-z,noexecstack")
     endif ()
 endif ()

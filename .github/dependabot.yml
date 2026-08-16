@@ -19,20 +19,17 @@ updates:
   # Both Dockerfiles pin their base image by digest; nothing else would notice a
   # rebased upstream image.
   - package-ecosystem: "docker"
-    directories:
-      - "/"
+    directory: "/"
     schedule:
       interval: "weekly"
 
-  # src/3rdparty/spdlog is pinned to a 2021 commit. This is the only automated
-  # signal that it has fallen behind.
+  # src/3rdparty/spdlog was pinned to a 2021 commit. This is the only automated
+  # signal that it has fallen behind again.
   - package-ecosystem: "gitsubmodule"
     directory: "/"
     schedule:
       interval: "weekly"
 
-  # macos-build.yml installs osxrelocator via pip.
-  - package-ecosystem: "pip"
-    directory: "/"
-    schedule:
-      interval: "weekly"
+  # No pip entry: Dependabot needs a manifest, and the bare
+  # `pip install osxrelocator` in macos-build.yml is invisible to it. An entry
+  # here would look like coverage without providing any.

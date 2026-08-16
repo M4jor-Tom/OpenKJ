@@ -14,34 +14,26 @@ else()
   set(CPM_DOWNLOAD_LOCATION "${CMAKE_BINARY_DIR}/cmake/CPM_${CPM_DOWNLOAD_VERSION}.cmake")
 endif()
 
-# A previously downloaded file is re-verified rather than trusted on sight: a
-# failed download leaves a zero-byte file that EXISTS reports as present, which
-# would otherwise be include()d and silently reused forever.
-if(EXISTS ${CPM_DOWNLOAD_LOCATION})
-  file(SHA256 ${CPM_DOWNLOAD_LOCATION} CPM_EXISTING_HASH)
-  if(NOT CPM_EXISTING_HASH STREQUAL CPM_DOWNLOAD_HASH)
-    message(STATUS "Cached CPM.cmake failed verification, re-downloading")
-    file(REMOVE ${CPM_DOWNLOAD_LOCATION})
-  endif()
-endif()
-
-if(NOT (EXISTS ${CPM_DOWNLOAD_LOCATION}))
-  message(STATUS "Downloading CPM.cmake to ${CPM_DOWNLOAD_LOCATION}")
-  file(DOWNLOAD
-       https://github.com/cpm-cmake/CPM.cmake/releases/download/v${CPM_DOWNLOAD_VERSION}/CPM.cmake
-       ${CPM_DOWNLOAD_LOCATION}
-       EXPECTED_HASH SHA256=${CPM_DOWNLOAD_HASH}
-       # CMAKE_TLS_VERIFY only began defaulting to ON in CMake 3.31; this project
-       # supports older versions, where the certificate would go unchecked.
-       TLS_VERIFY ON
-       STATUS CPM_DOWNLOAD_STATUS
-  )
-  list(GET CPM_DOWNLOAD_STATUS 0 CPM_DOWNLOAD_RESULT)
-  if(NOT CPM_DOWNLOAD_RESULT EQUAL 0)
-    list(GET CPM_DOWNLOAD_STATUS 1 CPM_DOWNLOAD_ERROR)
-    file(REMOVE ${CPM_DOWNLOAD_LOCATION})
-    message(FATAL_ERROR "Failed to download CPM.cmake: ${CPM_DOWNLOAD_ERROR}")
-  endif()
+# No EXISTS guard: with EXPECTED_HASH, file(DOWNLOAD) skips the transfer when the
+# file is already present and matches, and re-downloads it when it does not. That
+# also handles the zero-byte file a failed download leaves behind, which the old
+# EXISTS-only check would have include()d and reused indefinitely.
+file(DOWNLOAD
+     https://github.com/cpm-cmake/CPM.cmake/releases/download/v${CPM_DOWNLOAD_VERSION}/CPM.cmake
+     ${CPM_DOWNLOAD_LOCATION}
+     EXPECTED_HASH SHA256=${CPM_DOWNLOAD_HASH}
+     # CMAKE_TLS_VERIFY only began defaulting to ON in CMake 3.31; this project
+     # supports older versions, where the certificate would go unchecked.
+     TLS_VERIFY ON
+     STATUS CPM_DOWNLOAD_STATUS
+)
+# Without STATUS, a network failure is swallowed silently and the hash check is
+# skipped, leaving a broken include(). This is what turns that into an error.
+list(GET CPM_DOWNLOAD_STATUS 0 CPM_DOWNLOAD_RESULT)
+if(NOT CPM_DOWNLOAD_RESULT EQUAL 0)
+  list(GET CPM_DOWNLOAD_STATUS 1 CPM_DOWNLOAD_ERROR)
+  file(REMOVE ${CPM_DOWNLOAD_LOCATION})
+  message(FATAL_ERROR "Failed to download CPM.cmake: ${CPM_DOWNLOAD_ERROR}")
 endif()
 
 include(${CPM_DOWNLOAD_LOCATION})

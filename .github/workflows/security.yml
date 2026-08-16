@@ -34,10 +34,11 @@ jobs:
       - name: Run flawfinder
         uses: david-a-wheeler/flawfinder@c4216b74cf2639ffa98503768bd6e4299b5440c9 # master
         with:
-          # minlevel 4 keeps this to the genuinely interesting hits. The vendored
-          # trees (src/taglib, src/miniz, src/3rdparty) are excluded because we do
-          # not patch them here; they are covered by the SCA jobs below instead.
-          arguments: '--sarif --minlevel 4 --dataonly src/'
+          # minlevel 4 keeps this to the genuinely interesting hits. Scanned as an
+          # explicit list rather than src/, because src/taglib, src/miniz and
+          # src/3rdparty are vendored code this project does not patch — including
+          # them would bury real findings in third-party noise.
+          arguments: '--sarif --minlevel 4 --dataonly src/*.cpp src/*.h src/cdg src/models src/gstreamer src/runguard'
           output: 'flawfinder.sarif'
 
       - name: Upload results
@@ -62,13 +63,10 @@ jobs:
         with:
           path: .
           format: cyclonedx-json
+          # sbom-action uploads the artifact itself when artifact-name is set, so
+          # no separate upload-artifact step is needed.
           artifact-name: openkj-sbom.cyclonedx.json
           output-file: openkj-sbom.cyclonedx.json
-
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: sbom
-          path: openkj-sbom.cyclonedx.json
 
   dependency-check:
     name: OWASP Dependency-Check
@@ -93,10 +91,12 @@ jobs:
           path: '.'
           format: 'SARIF'
           out: 'reports'
+          # No --failOnCVSS threshold: continue-on-error above already makes this
+          # advisory, and stacking both knobs only obscures that. Findings still
+          # reach the Security tab via the SARIF upload below.
           args: >
             --nvdApiKey ${{ secrets.NVD_API_KEY }}
             --enableExperimental
-            --failOnCVSS 11
 
       - name: Upload results
         if: hashFiles('reports/dependency-check-report.sarif') != ''
@@ -147,7 +147,9 @@ jobs:
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           scan-type: fs
-          scanners: vuln,secret,misconfig
+          # No secret scanner here: gitleaks below covers secrets across the full
+          # git history, so enabling it would only file the same findings twice.
+          scanners: vuln,misconfig
           format: sarif
           output: trivy-fs.sarif
           severity: CRITICAL,HIGH,MEDIUM
@@ -292,22 +294,31 @@ jobs:
           exit $fail
 
   # ---------------------------------------------------------------------------
-  # Cheap regression guard for the SQL parameterisation work
+  # Regression guard for the cleartext-transport work
+  #
+  # Deliberately not a grep for concatenated SQL. That was tried and it is not
+  # reliably greppable: a statement assembled into a local variable before
+  # exec(), or quoted with single quotes, slips straight past — which would have
+  # missed two of the seven queries this branch fixed. A check that quietly
+  # matches nothing is worse than no check, because it reads as coverage.
+  # CodeQL's security-extended suite does that job properly with real dataflow.
+  #
+  # A cleartext URL, by contrast, is a literal that cannot be obfuscated by
+  # accident, so grep is exactly the right tool for it.
   # ---------------------------------------------------------------------------
-  sql-parameterisation:
-    name: No string-concatenated SQL
+  cleartext-urls:
+    name: No cleartext http:// endpoints
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 
-      - name: Reject QSqlQuery::exec() on a concatenated string
+      - name: Reject http:// URLs in source
         run: |
-          # Matches exec("... \" ... , i.e. a statement built by gluing a quoted
-          # SQL fragment to something else. Parameterised queries call exec()
-          # with no arguments, so they never match.
-          if grep -rnE 'exec\("[^"]*\\"' --include='*.cpp' --include='*.h' src/ \
-               | grep -v '^src/taglib/' | grep -v '^src/miniz/' | grep -v '^src/3rdparty/'; then
-            echo "::error::SQL built by string concatenation. Use prepare() + bindValue()."
+          if grep -rn '"http://' --include='*.cpp' --include='*.h' --include='*.ui' src/ \
+               | grep -v -e '^src/taglib/' -e '^src/miniz/' -e '^src/3rdparty/' \
+                         -e 'w3.org' -e 'purl.org' -e 'inkscape' -e 'sodipodi' \
+                         -e 'creativecommons' -e 'gnu.org/licenses'; then
+            echo "::error::Cleartext http:// endpoint. Use https://."
             exit 1
           fi
-          echo "No string-concatenated SQL found."
+          echo "No cleartext http:// endpoints found."
