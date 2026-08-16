@@ -11,6 +11,7 @@
 #include <spdlog/fmt/ostr.h>
 
 std::ostream & operator<<(std::ostream& os, const QString& s);
+#include "qstringformatter.h"
 
 TableModelQueueSongs::TableModelQueueSongs(TableModelKaraokeSongs &karaokeSongsModel, QObject *parent)
         : QAbstractTableModel(parent), m_karaokeSongsModel(karaokeSongsModel) {

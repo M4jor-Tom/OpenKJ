@@ -11,6 +11,7 @@
 #include <QMutex>
 
 std::ostream& operator<<(std::ostream& os, const QString& s);
+#include "qstringformatter.h"
 
 class TickerImageCreator : public QThread {
 Q_OBJECT

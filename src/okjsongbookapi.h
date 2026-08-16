@@ -12,6 +12,7 @@
 #include <spdlog/fmt/ostr.h>
 
 std::ostream& operator<<(std::ostream& os, const QString& s);
+#include "qstringformatter.h"
 
 
 class OkjsRequest

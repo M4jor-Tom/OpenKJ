@@ -31,6 +31,7 @@
 #include <chrono>
 
 std::ostream& operator<<(std::ostream& os, const QString& s);
+#include "qstringformatter.h"
 
 TableModelRotation::TableModelRotation(QObject *parent)
         : QAbstractTableModel(parent) {
