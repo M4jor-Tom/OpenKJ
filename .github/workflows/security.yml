@@ -209,6 +209,10 @@ jobs:
       - name: actionlint
         env:
           ACTIONLINT_VERSION: 1.7.12
+          # actionlint exits non-zero on any finding, including shellcheck style
+          # and info notes. Limited to warnings and above so this gate flags real
+          # problems rather than failing on pre-existing formatting preferences.
+          SHELLCHECK_OPTS: -S warning
         run: |
           curl -sSfL \
             "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz" \

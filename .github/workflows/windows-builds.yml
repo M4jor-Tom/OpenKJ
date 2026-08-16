@@ -95,8 +95,6 @@ jobs:
         VERSION_WITHOUT_V: ${{ steps.get_version.outputs.version-without-v }}
         ISS_BITS: ${{ matrix.bits }}
       run: |
-        BRANCH="${rtype}"
-
         echo "Updating okjversion.h"
         echo "#ifndef OKJVERSION_H" > src/okjversion.h
         echo "#define OKJVERSION_H" >> src/okjversion.h

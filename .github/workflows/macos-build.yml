@@ -60,8 +60,6 @@ jobs:
         MINOR: ${{ steps.get_version.outputs.minor }}
         PATCH: ${{ steps.get_version.outputs.patch }}
       run: |
-        BRANCH="${rtype}"
-
         echo "Updating okjversion.h"
         echo "#ifndef OKJVERSION_H" > src/okjversion.h
         echo "#define OKJVERSION_H" >> src/okjversion.h
