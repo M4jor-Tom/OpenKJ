@@ -83,6 +83,7 @@ public:
     int remainRtOffset();
     int remainBtmOffset();
     qint64 hash(const QString & str);
+    void purgeLegacySecrets();
     bool progressiveSearchEnabled();
     QString storeDownloadDir();
     QString logDir();

@@ -3,6 +3,7 @@
 #include "settings.h"
 
 #include <QMessageBox>
+#include <QApplication>
 
 DlgPassword::DlgPassword(QWidget *parent) :
     QDialog(parent),
@@ -20,7 +21,16 @@ DlgPassword::~DlgPassword()
 void DlgPassword::on_pushButtonOk_clicked()
 {
     Settings settings;
-    if (settings.chkPassword(ui->lineEditPassword->text()))
+    // chkPassword now runs PBKDF2 with a deliberately high iteration count, which
+    // takes a noticeable fraction of a second here and over a second on modest
+    // hardware. Without this the dialog just appears to hang on the click.
+    ui->pushButtonOk->setEnabled(false);
+    QApplication::setOverrideCursor(Qt::WaitCursor);
+    const bool ok = settings.chkPassword(ui->lineEditPassword->text());
+    QApplication::restoreOverrideCursor();
+    ui->pushButtonOk->setEnabled(true);
+
+    if (ok)
     {
         ui->label->hide();
         password = ui->lineEditPassword->text();

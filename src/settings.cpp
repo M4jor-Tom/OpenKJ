@@ -25,6 +25,8 @@
 #include <QStandardPaths>
 #include <QCryptographicHash>
 #include <QDataStream>
+#include <QPasswordDigestor>
+#include <QRandomGenerator>
 #include "simplecrypt.h"
 #include <QStandardPaths>
 #include <QDir>
@@ -185,12 +187,31 @@ void Settings::dbSetDirectoryWatchEnabled(bool val)
     settings->setValue("directoryWatchEnabled", val);
 }
 
+// Deliberately high: this guards a UI lock that an attacker can only attack
+// offline, so the cost has to be paid per guess rather than per login.
+static constexpr int s_pwKdfIterations = 210000;
+static constexpr int s_pwSaltBytes = 16;
+static constexpr int s_pwDigestBytes = 32;
+
 void Settings::setPassword(QString password)
 {
-    qint64 passHash = this->hash(password);
-    SimpleCrypt simpleCrypt(passHash);
-    QString pchk = simpleCrypt.encryptToString(QString("testpass"));
-    settings->setValue("pchk", pchk);
+    QByteArray salt(s_pwSaltBytes, Qt::Uninitialized);
+    QRandomGenerator::system()->fillRange(reinterpret_cast<quint32 *>(salt.data()),
+                                          s_pwSaltBytes / int(sizeof(quint32)));
+
+    const QByteArray digest = QPasswordDigestor::deriveKeyPbkdf2(
+            QCryptographicHash::Sha256, password.toUtf8(), salt,
+            s_pwKdfIterations, s_pwDigestBytes);
+
+    settings->setValue("pwSalt", QString::fromLatin1(salt.toBase64()));
+    settings->setValue("pwIterations", s_pwKdfIterations);
+    settings->setValue("pwDigest", QString::fromLatin1(digest.toBase64()));
+
+    // Drop the old verifier. It stored SimpleCrypt("testpass") under a key
+    // derived from the password, which is a known-plaintext oracle: an attacker
+    // with read access to the settings file could brute-force the password
+    // entirely offline.
+    settings->remove("pchk");
 }
 
 void Settings::clearPassword()
@@ -202,37 +223,63 @@ void Settings::clearPassword()
 
 bool Settings::chkPassword(QString password)
 {
-    qint64 passHash = this->hash(password);
-    SimpleCrypt simpleCrypt(passHash);
-    QString pchk = simpleCrypt.decryptToString(settings->value("pchk", QString()).toString());
-    if (pchk == "testpass")
-        return true;
-    else
+    const QByteArray salt = QByteArray::fromBase64(settings->value("pwSalt").toByteArray());
+    const QByteArray expected = QByteArray::fromBase64(settings->value("pwDigest").toByteArray());
+    const int iterations = settings->value("pwIterations", 0).toInt();
+
+    if (salt.isEmpty() || expected.isEmpty() || iterations <= 0)
         return false;
+
+    const QByteArray actual = QPasswordDigestor::deriveKeyPbkdf2(
+            QCryptographicHash::Sha256, password.toUtf8(), salt, iterations, expected.size());
+
+    if (actual.size() != expected.size())
+        return false;
+
+    // Constant time: an early return would leak how much of the digest matched.
+    quint8 diff = 0;
+    for (int i = 0; i < actual.size(); ++i)
+        diff |= static_cast<quint8>(actual.at(i) ^ expected.at(i));
+    return diff == 0;
 }
 
 bool Settings::passIsSet()
 {
-    if (settings->contains("pchk"))
-        return true;
-    return false;
+    return settings->contains("pwDigest");
 }
 
+// Card details are no longer persisted.
+//
+// The previous implementation stored PAN, expiry and CVV as one comma-separated
+// string under SimpleCrypt, which is a repeating 8-byte XOR keyed by a 64-bit
+// fold of an unsalted MD5. Storing the CVV after authorisation is prohibited
+// outright by PCI-DSS regardless of how it is protected, and the PAN was not
+// rendered unreadable by any approved mechanism.
+//
+// The signature is kept so call sites need not change; it now only ensures any
+// previously stored blob is removed.
 void Settings::setCC(QString ccn, QString month, QString year, QString ccv, QString passwd)
 {
-    QString cc = ccn + "," + month + "," + year + "," + ccv;
-    SimpleCrypt simpleCrypt(this->hash(passwd));
-    settings->setValue("cc", simpleCrypt.encryptToString(cc));
+    Q_UNUSED(ccn)
+    Q_UNUSED(month)
+    Q_UNUSED(year)
+    Q_UNUSED(ccv)
+    Q_UNUSED(passwd)
+    clearCC();
 }
 
 void Settings::setSaveCC(bool save)
 {
-    settings->setValue("saveCC", save);
+    // No-op: card details are no longer persisted, so there is nothing to opt
+    // into. Writing the key here would only recreate something saveCC() ignores
+    // and purgeLegacySecrets() deletes at startup.
+    Q_UNUSED(save)
 }
 
 bool Settings::saveCC()
 {
-    return settings->value("saveCC", false).toBool();
+    // Always false: card details are no longer persisted; see setCC().
+    return false;
 }
 
 void Settings::clearCC()
@@ -279,46 +326,31 @@ bool Settings::dbDoubleClickAddsSong()
 
 QString Settings::getCCN(const QString &password)
 {
-    SimpleCrypt simpleCrypt(this->hash(password));
-    QString encrypted = settings->value("cc", QString()).toString();
-    if (encrypted == QString())
-        return QString();
-    QString cc = simpleCrypt.decryptToString(encrypted);
-    QStringList parts = cc.split(",");
-    return parts.at(0);
+    // Card details are no longer stored; see setCC().
+    Q_UNUSED(password)
+    return QString();
 }
 
 QString Settings::getCCM(const QString &password)
 {
-    SimpleCrypt simpleCrypt(this->hash(password));
-    QString encrypted = settings->value("cc", QString()).toString();
-    if (encrypted == QString())
-        return QString();
-    QString cc = simpleCrypt.decryptToString(encrypted);
-    QStringList parts = cc.split(",");
-    return parts.at(1);
+    // Card details are no longer stored; see setCC().
+    Q_UNUSED(password)
+    return QString();
 }
 
 QString Settings::getCCY(const QString &password)
 {
-    SimpleCrypt simpleCrypt(this->hash(password));
-    QString encrypted = settings->value("cc", QString()).toString();
-    if (encrypted == QString())
-        return QString();
-    QString cc = simpleCrypt.decryptToString(encrypted);
-    QStringList parts = cc.split(",");
-    return parts.at(2);
+    // Card details are no longer stored; see setCC().
+    Q_UNUSED(password)
+    return QString();
 }
 
 QString Settings::getCCV(const QString &password)
 {
-    SimpleCrypt simpleCrypt(this->hash(password));
-    QString encrypted = settings->value("cc", QString()).toString();
-    if (encrypted == QString())
-        return QString();
-    QString cc = simpleCrypt.decryptToString(encrypted);
-    QStringList parts = cc.split(",");
-    return parts.at(3);
+    // Card details are no longer stored; see setCC(). The CVV in particular must
+    // never be retained after authorisation.
+    Q_UNUSED(password)
+    return QString();
 }
 
 void Settings::setKaroakeDotNetUser(const QString &username, const QString &password)
@@ -369,6 +401,26 @@ Settings::Settings(QObject *parent) :
     }
     settings = new QSettings(khDir.absolutePath() + QDir::separator() + "openkj.ini", QSettings::IniFormat);
 #endif
+    purgeLegacySecrets();
+}
+
+// Removes secrets written by earlier versions. Without this, existing users keep
+// a stored PAN and CVV, and a known-plaintext password verifier, on disk
+// indefinitely — fixing the writers alone would not clean up what is already
+// there.
+void Settings::purgeLegacySecrets()
+{
+    if (settings->contains("cc"))
+        settings->remove("cc");
+    if (settings->contains("saveCC"))
+        settings->remove("saveCC");
+    if (settings->contains("pchk"))
+    {
+        // The old verifier cannot be migrated: deriving the new digest needs the
+        // plaintext password, which was never stored. The user is asked to set
+        // the password again.
+        settings->remove("pchk");
+    }
 }
 
 bool Settings::cdgWindowFullscreen()

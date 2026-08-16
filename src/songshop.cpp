@@ -7,6 +7,9 @@
 #include <QEventLoop>
 #include <QFileInfo>
 #include <QDir>
+#include <QUrlQuery>
+#include <QRegularExpression>
+#include <QDebug>
 
 
 SongShop::SongShop(QObject *parent) : QObject(parent) {
@@ -39,34 +42,45 @@ ShopSongs SongShop::getSongs() {
 
 void SongShop::knLogin(QString userName, QString password) {
     knLoginError = false;
-    QByteArray md5hash = QCryptographicHash::hash(
-            QByteArray::fromRawData((const char *) password.toLocal8Bit(), password.length()),
-            QCryptographicHash::Md5).toHex();
-    QString passHash = QString(md5hash);
-    QString urlstr =
-            "https://www.partytyme.net/songshop/cat/api_account_setup.php?action=validate_login&username=" + userName +
-            "&md5=" + passHash + "&merchant=99";
-    QUrl url = QUrl(urlstr);
-    QNetworkRequest request(url);
-    manager->get(request);
+    // toLocal8Bit() returns a temporary and password.length() counts UTF-16 code
+    // units, not bytes in that encoding, so fromRawData could read past the end
+    // of the buffer for non-ASCII passwords. Hash the QByteArray directly.
+    const QByteArray passwordBytes = password.toUtf8();
+    const QString passHash = QString::fromLatin1(
+            QCryptographicHash::hash(passwordBytes, QCryptographicHash::Md5).toHex());
+
+    // Credentials go in the request body, not the query string: a URL is logged
+    // by the server, by any intermediary proxy, and by Qt's own network logging.
+    QUrlQuery body;
+    body.addQueryItem("action", "validate_login");
+    body.addQueryItem("username", userName);
+    body.addQueryItem("md5", passHash);
+    body.addQueryItem("merchant", "99");
+
+    QNetworkRequest request(QUrl("https://www.partytyme.net/songshop/cat/api_account_setup.php"));
+    request.setHeader(QNetworkRequest::ContentTypeHeader, "application/x-www-form-urlencoded");
+    manager->post(request, body.toString(QUrl::FullyEncoded).toUtf8());
 }
 
 void SongShop::knPurchase(QString songId, QString ccNumber, QString ccM, QString ccY, QString ccCVV) {
-    QString urlstr = "https://www.partytyme.net/songshop/cat/api_make_order.php?";
-    if (songId.contains("PY"))
-        urlstr += "media_format=mp3g&";
-    else
-        urlstr += "media_format=mp4&";
-    urlstr += "tracks=" + songId + "&";
-    urlstr += "cc_number=" + ccNumber + "&";
-    urlstr += "cc_cvv=" + ccCVV + "&";
-    urlstr += "cc_exp_mm=" + ccM + "&";
-    urlstr += "cc_exp_yyyy=" + ccY + "&";
-    urlstr += "session_id=" + knSessionId + "&";
-    urlstr += "merchant=99";
-    QUrl url = QUrl(urlstr);
-    QNetworkRequest request(url);
-    manager->get(request);
+    // Cardholder data must never appear in a URL. TLS protects the wire, but a
+    // query string lands in the server's access log, in any reverse proxy or CDN
+    // in front of it, and in Referer headers — none of which are in scope for
+    // cardholder-data protection. A full PAN plus CVV in a log is a direct
+    // PCI-DSS violation, so these move into the request body.
+    QUrlQuery body;
+    body.addQueryItem("media_format", songId.contains("PY") ? "mp3g" : "mp4");
+    body.addQueryItem("tracks", songId);
+    body.addQueryItem("cc_number", ccNumber);
+    body.addQueryItem("cc_cvv", ccCVV);
+    body.addQueryItem("cc_exp_mm", ccM);
+    body.addQueryItem("cc_exp_yyyy", ccY);
+    body.addQueryItem("session_id", knSessionId);
+    body.addQueryItem("merchant", "99");
+
+    QNetworkRequest request(QUrl("https://www.partytyme.net/songshop/cat/api_make_order.php"));
+    request.setHeader(QNetworkRequest::ContentTypeHeader, "application/x-www-form-urlencoded");
+    manager->post(request, body.toString(QUrl::FullyEncoded).toUtf8());
 }
 
 bool SongShop::loggedIn() {
@@ -82,12 +96,48 @@ void SongShop::setDlSongInfo(QString artist, QString title, QString songId) {
 }
 
 void SongShop::downloadFile(const QString &url, const QString &destFn) {
+    // Both the URL and the filename originate from the song-shop JSON response,
+    // so neither can be trusted.
+
+    // A file:// or http:// URL here would exfiltrate a local file into the
+    // download directory, or silently downgrade the transfer.
+    const QUrl srcUrl(url);
+    if (!srcUrl.isValid() || srcUrl.scheme() != QLatin1String("https")) {
+        qWarning() << "songshop: refusing download from non-https URL:" << url;
+        emit downloadFailed();
+        return;
+    }
+
     QString destDir = m_settings.storeDownloadDir();
     if (!QDir(destDir).exists())
-        QDir().mkdir(destDir);
-    QString destPath = destDir + destFn;
+        QDir().mkpath(destDir);
+
+    // fileName() strips any directory component, then the remaining separators
+    // and dot segments are removed, so a name like "../../.config/autostart/x"
+    // cannot escape the download directory.
+    // static: the pattern is constant, so compiling it per call is wasted work
+    // and is what clazy's use-static-qregularexpression check asks for.
+    static const QRegularExpression illegalChars(QStringLiteral("[/\\\\:*?\"<>|]"));
+    QString safeName = QFileInfo(destFn).fileName();
+    safeName.remove(illegalChars);
+    while (safeName.startsWith('.'))
+        safeName.remove(0, 1);
+    if (safeName.isEmpty())
+        safeName = QStringLiteral("download");
+
+    const QDir dir(destDir);
+    const QString destPath = dir.filePath(safeName);
+
+    // Belt and braces: confirm the resolved path really is inside destDir.
+    const QString canonicalDir = QDir(destDir).absolutePath();
+    if (!QFileInfo(destPath).absoluteFilePath().startsWith(canonicalDir + QDir::separator())) {
+        qWarning() << "songshop: refusing to write outside the download directory:" << destPath;
+        emit downloadFailed();
+        return;
+    }
+
     QNetworkAccessManager m_NetworkMngr;
-    QNetworkReply *reply = m_NetworkMngr.get(QNetworkRequest(url));
+    QNetworkReply *reply = m_NetworkMngr.get(QNetworkRequest(srcUrl));
     QEventLoop loop;
     QObject::connect(reply, &QNetworkReply::finished, &loop, &QEventLoop::quit);
     connect(reply, &QNetworkReply::downloadProgress, this, &SongShop::onDownloadProgress);

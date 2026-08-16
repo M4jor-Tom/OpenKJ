@@ -2,6 +2,8 @@
 #include "ui_dlgsetpassword.h"
 #include "settings.h"
 
+#include <QApplication>
+
 
 
 DlgSetPassword::DlgSetPassword(QWidget *parent) :
@@ -32,7 +34,11 @@ void DlgSetPassword::on_pushButtonOk_clicked()
     else
     {
         Settings settings;
+        // Same deliberate PBKDF2 cost as the unlock dialog; show that it is
+        // working rather than appearing frozen.
+        QApplication::setOverrideCursor(Qt::WaitCursor);
         settings.setPassword(ui->lineEditPassword1->text());
+        QApplication::restoreOverrideCursor();
         password = ui->lineEditPassword1->text();
         accept();
     }

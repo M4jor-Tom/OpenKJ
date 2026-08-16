@@ -20,7 +20,11 @@ DlgSongShopPurchase::DlgSongShopPurchase(std::shared_ptr<SongShop> songShop, QWi
     ui->lineEditCCV->setValidator(new QRegExpValidator(QRegExp("[0-9]*"), this));
     knLoginTest = false;
     ui->cbxSaveAccount->setChecked(m_settings.saveKNAccount());
-    ui->cbxSaveCard->setChecked(m_settings.saveCC());
+    // Card details are no longer persisted, so the control is disabled rather
+    // than left in place implying a feature that no longer does anything.
+    ui->cbxSaveCard->setChecked(false);
+    ui->cbxSaveCard->setEnabled(false);
+    ui->cbxSaveCard->setToolTip(tr("Storing card details is no longer supported."));
     authenticated = false;
     setupDone = true;
     connect(shop.get(), &SongShop::paymentProcessingFailed, this, &DlgSongShopPurchase::paymentProcessingFailed);

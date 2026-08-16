@@ -65,6 +65,7 @@ signals:
     void knLoginFailure();
     void karaokeSongDownloaded(QString path);
     void paymentProcessingFailed();
+    void downloadFailed();
     void downloadProgress(qint64 received, qint64 total);
 
 public slots:
