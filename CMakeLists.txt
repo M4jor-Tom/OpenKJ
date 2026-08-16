@@ -27,6 +27,64 @@ set(CMAKE_AUTOUIC ON)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# ---------------------------------------------------------------------------
+# Security hardening
+#
+# Set at directory scope, deliberately before the add_executable() calls and
+# before add_subdirectory(src/3rdparty/spdlog), so the vendored taglib and miniz
+# sources and the bundled spdlog inherit these too. Every flag is probed first,
+# because this same file is built by GCC, Clang, AppleClang and MSVC.
+# ---------------------------------------------------------------------------
+include(CheckCXXCompilerFlag)
+
+# _FORTIFY_SOURCE expands to nothing without optimisation, so leaving the build
+# type unset would quietly disable part of the hardening below. Both Dockerfiles
+# used to configure with no build type at all.
+if (NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+    set(CMAKE_BUILD_TYPE RelWithDebInfo CACHE STRING "Build type" FORCE)
+    message(STATUS "No CMAKE_BUILD_TYPE specified, defaulting to ${CMAKE_BUILD_TYPE}")
+endif ()
+
+function(okj_add_flag_if_supported flag)
+    string(MAKE_C_IDENTIFIER "OKJ_HAS_${flag}" flag_var)
+    check_cxx_compiler_flag("${flag}" ${flag_var})
+    if (${flag_var})
+        add_compile_options("${flag}")
+    endif ()
+endfunction()
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+if (MSVC)
+    okj_add_flag_if_supported(/GS)
+    okj_add_flag_if_supported(/guard:cf)
+    okj_add_flag_if_supported(/sdl)
+    string(APPEND CMAKE_EXE_LINKER_FLAGS " /NXCOMPAT /DYNAMICBASE /HIGHENTROPYVA /guard:cf")
+else ()
+    okj_add_flag_if_supported(-fstack-protector-strong)
+    okj_add_flag_if_supported(-fstack-clash-protection)
+    okj_add_flag_if_supported(-fcf-protection=full)
+    okj_add_flag_if_supported(-Wformat)
+    okj_add_flag_if_supported(-Wformat-security)
+
+    # Prefer level 3 where the toolchain understands it, else fall back to 2.
+    # Skipped for Debug, where it would only produce a "requires optimization"
+    # warning on every translation unit.
+    if (NOT CMAKE_BUILD_TYPE STREQUAL "Debug")
+        check_cxx_compiler_flag("-D_FORTIFY_SOURCE=3" OKJ_HAS_FORTIFY_3)
+        if (OKJ_HAS_FORTIFY_3)
+            add_compile_options(-D_FORTIFY_SOURCE=3)
+        else ()
+            okj_add_flag_if_supported(-D_FORTIFY_SOURCE=2)
+        endif ()
+    endif ()
+
+    # ELF-only linker hardening; ld64 on macOS rejects -z outright.
+    if (${CMAKE_SYSTEM_NAME} MATCHES "Linux" OR ${CMAKE_SYSTEM_NAME} MATCHES "FreeBSD")
+        string(APPEND CMAKE_EXE_LINKER_FLAGS " -Wl,-z,relro -Wl,-z,now -Wl,-z,noexecstack")
+    endif ()
+endif ()
+
 find_package(QT NAMES Qt5 COMPONENTS Widgets REQUIRED)
 find_package(Qt${QT_VERSION_MAJOR} COMPONENTS Gui Sql Network Widgets Concurrent Svg PrintSupport REQUIRED)
 
@@ -87,7 +145,10 @@ if (NOT EXTERNAL_SPDLOG)
     else ()
         message(STATUS "No spdlog install found or CPM spdlog forced, pulling it in via CPM")
         include(cmake/CPM.cmake)
-        CPMAddPackage("gh:gabime/spdlog@1.8.2")
+        # Kept in step with the src/3rdparty/spdlog submodule. The previous 1.8.2
+        # pin predates the fix for CVE-2025-6140 (released in 1.15.2), and this
+        # branch is what produces the shipped Windows binaries.
+        CPMAddPackage("gh:gabime/spdlog@1.17.0")
     endif ()
 endif ()
 
